@@ -1,16 +1,27 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow warnings
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN for faster startup
+
 import cv2
 import mediapipe as mp
 import random
 import time
 import platform
 
+# Sound toggle state
+sound_enabled = True
+
 # Sound functions
 if platform.system() == 'Windows':
     import winsound
-    def beep(): winsound.Beep(1000, 200)
+    def beep(): 
+        if sound_enabled:
+            winsound.Beep(1000, 200)
 else:
     import os
-    def beep(): os.system('play -nq -t alsa synth 0.2 sine 1000')  # or use 'afplay' on Mac
+    def beep(): 
+        if sound_enabled:
+            os.system('play -nq -t alsa synth 0.2 sine 1000')  # or use 'afplay' on Mac
 
 # Initialize MediaPipe
 mp_hands = mp.solutions.hands
@@ -70,12 +81,19 @@ def find_available_cameras():
     return available_cameras
 
 def choose_camera():
-    """Let user choose from available cameras"""
+    """Let user choose from available cameras (auto-selects camera 1 if 3+ cameras available)"""
     available_cameras = find_available_cameras()
     
     if not available_cameras:
         print("❌ No cameras found! Please check your camera connections.")
         exit()
+    
+    # Auto-select camera 1 if 3 or more cameras are available
+    if len(available_cameras) >= 3:
+        # Check if camera 1 is in the list
+        if any(cam['index'] == 1 for cam in available_cameras):
+            print(f"\n✅ Auto-selected Camera 1 (3+ cameras detected)")
+            return 1
     
     print("\n" + "="*50)
     print("📷 AVAILABLE CAMERAS:")
@@ -131,42 +149,71 @@ def find_best_camera_resolution(camera_index):
 
 print("🎮 Rock Paper Scissors with Emotion Detection")
 print("=" * 50)
+print()
+print("⚠️  IMPORTANT NOTICE:")
+print("=" * 50)
+print("👉 Please use your RIGHT HAND to play the game")
+print("👉 Make clear gestures: ✊ Rock, ✋ Paper, ✌️ Scissors")
+print("👉 Position your hand clearly in front of the camera")
+print("=" * 50)
+print()
 
-# Let user choose camera
-camera_index = choose_camera()
-
-print(f"\n📷 Opening camera {camera_index}...")
-start_time = time.time()
-
-# Open selected camera
-cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-
-if not cap.isOpened():
-    print(f"❌ Error: Could not open camera {camera_index}")
-    exit()
-
-print(f"✅ Camera {camera_index} opened successfully!")
-best_resolution = find_best_camera_resolution(camera_index)
-cap.release()  # Release to reopen with best settings
-
-# Reopen with best resolution
-cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, best_resolution[0])
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, best_resolution[1])
-
-print(f"⏱️  Camera {camera_index} opened in {time.time() - start_time:.2f} seconds")
-print(f"🎯 Using resolution: {best_resolution[0]}x{best_resolution[1]}")
-
-# Warm up camera with dummy reads
-print("🔥 Warming up camera...")
-for i in range(5):
-    ret, frame = cap.read()
-    if ret:
-        print(f"  📸 Warm-up frame {i+1}/5 captured")
-    else:
-        print(f"  ⚠️  Warning: Failed to capture warm-up frame {i+1}")
-
-print("✅ Camera ready!")
+# Get camera index (from command line argument or choose manually)
+import sys
+if len(sys.argv) > 1:
+    # Camera index provided as command line argument (from launcher)
+    camera_index = int(sys.argv[1])
+    print(f"\n[USING CAMERA {camera_index} FROM LAUNCHER]")
+    print(f"\n📷 Opening camera {camera_index}...")
+    
+    # Skip camera detection, open directly
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        print(f"❌ Error: Could not open camera {camera_index}")
+        exit()
+    
+    # Use default high resolution
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    best_resolution = (1920, 1080)
+    print(f"✅ Camera {camera_index} ready!")
+    
+else:
+    # Let user choose camera manually (standalone mode)
+    camera_index = choose_camera()
+    
+    print(f"\n📷 Opening camera {camera_index}...")
+    start_time = time.time()
+    
+    # Open selected camera
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    
+    if not cap.isOpened():
+        print(f"❌ Error: Could not open camera {camera_index}")
+        exit()
+    
+    print(f"✅ Camera {camera_index} opened successfully!")
+    best_resolution = find_best_camera_resolution(camera_index)
+    cap.release()  # Release to reopen with best settings
+    
+    # Reopen with best resolution
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, best_resolution[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, best_resolution[1])
+    
+    print(f"⏱️  Camera {camera_index} opened in {time.time() - start_time:.2f} seconds")
+    print(f"🎯 Using resolution: {best_resolution[0]}x{best_resolution[1]}")
+    
+    # Warm up camera with dummy reads (only in standalone mode)
+    print("🔥 Warming up camera...")
+    for i in range(5):
+        ret, frame = cap.read()
+        if ret:
+            print(f"  📸 Warm-up frame {i+1}/5 captured")
+        else:
+            print(f"  ⚠️  Warning: Failed to capture warm-up frame {i+1}")
+    
+    print("✅ Camera ready!")
 
 # Display actual camera resolution
 actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -379,10 +426,28 @@ def get_emotion_reaction(emotion, result):
     return reactions.get(emotion, reactions["neutral"]).get(result, result)
 
 print("Starting Rock Paper Scissors game...")
-print("Press 'q' to quit, 'r' to restart round, 'l' to toggle landmarks")
+print("Controls:")
+print("  Q - Quit game")
+print("  R - Restart round")
+print("  L - Toggle landmarks")
+print("  F - Toggle fullscreen")
+print("  S - Toggle sound ON/OFF")
+print(f"🔊 Sound is currently: {'ON' if sound_enabled else 'OFF'}")
 
-# Create window with proper flags
-cv2.namedWindow("Rock Paper Scissors", cv2.WINDOW_AUTOSIZE)
+# Create window with proper flags for fullscreen
+cv2.namedWindow("Rock Paper Scissors", cv2.WINDOW_NORMAL)
+cv2.setWindowProperty("Rock Paper Scissors", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+# Get screen resolution for fullscreen display
+import tkinter as tk
+root = tk.Tk()
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
+root.destroy()
+print(f"🖥️  Screen resolution: {screen_width}x{screen_height}")
+
+# Flag to track fullscreen state
+is_fullscreen = True
 
 while True:
     ret, frame = cap.read()
@@ -444,6 +509,29 @@ while True:
             cv2.circle(frame, (text_x + text_size[0]//2, text_y - text_size[1]//2), 
                       circle_radius, (0, 255, 255), max(1, int(3 * ui_scale)))
             
+            # Right hand reminder BELOW the countdown circle (no emoji)
+            if actual_width < 800:
+                hand_reminder = ">> USE RIGHT HAND <<"
+            else:
+                hand_reminder = ">> USE YOUR RIGHT HAND <<"
+            
+            hand_font_size = 1.0 * text_scale
+            hand_size = cv2.getTextSize(hand_reminder, cv2.FONT_HERSHEY_DUPLEX, hand_font_size, max(1, int(3 * text_scale)))[0]
+            hand_x = max(10, (w - hand_size[0]) // 2)
+            hand_y = text_y + circle_radius + int(70 * ui_scale)  # Position BELOW circle
+            
+            # Red background box for visibility
+            cv2.rectangle(frame, 
+                         (hand_x - 15, hand_y - hand_size[1] - 10), 
+                         (hand_x + hand_size[0] + 15, hand_y + 10), 
+                         (0, 0, 255), -1)
+            cv2.rectangle(frame, 
+                         (hand_x - 15, hand_y - hand_size[1] - 10), 
+                         (hand_x + hand_size[0] + 15, hand_y + 10), 
+                         (255, 255, 255), 3)
+            cv2.putText(frame, hand_reminder, (hand_x, hand_y), cv2.FONT_HERSHEY_DUPLEX, 
+                        hand_font_size, (255, 255, 255), max(1, int(3 * text_scale)))
+            
             # Countdown text with shadow effect (adaptive thickness)
             shadow_thickness = max(1, int(6 * text_scale))
             main_thickness = max(1, int(4 * text_scale))
@@ -495,6 +583,19 @@ while True:
     cv2.rectangle(overlay, (0, 0), (w, int(overlay_height * ui_scale)), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
     
+    # Draw back button (top-left corner)
+    back_btn_x = int(20 * ui_scale)
+    back_btn_y = int(20 * ui_scale)
+    back_btn_w = int(120 * ui_scale)
+    back_btn_h = int(40 * ui_scale)
+    cv2.rectangle(frame, (back_btn_x, back_btn_y), 
+                  (back_btn_x + back_btn_w, back_btn_y + back_btn_h), (50, 50, 50), -1)
+    cv2.rectangle(frame, (back_btn_x, back_btn_y), 
+                  (back_btn_x + back_btn_w, back_btn_y + back_btn_h), (100, 100, 100), 2)
+    cv2.putText(frame, "< BACK", 
+                (back_btn_x + int(10 * ui_scale), back_btn_y + int(28 * ui_scale)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6 * text_scale, (255, 255, 255), 2)
+    
     # Calculate text sizes based on scaling factor
     score_font_size = 1.0 * text_scale
     emotion_font_size = 0.9 * text_scale
@@ -535,6 +636,15 @@ while True:
     y_pos += line_height
     cv2.putText(frame, landmarks_text, (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 
                 landmarks_font_size, (255, 255, 0), max(1, int(2 * text_scale)))
+    
+    # Display sound status
+    y_pos += line_height
+    sound_text = f"Sound: {'ON' if sound_enabled else 'OFF'} (S)"
+    if actual_width < 800:
+        sound_text = f"Sound: {'ON' if sound_enabled else 'OFF'}"
+    sound_color = (0, 255, 100) if sound_enabled else (100, 100, 100)
+    cv2.putText(frame, sound_text, (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 
+                landmarks_font_size, sound_color, max(1, int(2 * text_scale)))
 
     # Display gestures with adaptive layout
     if player_move:
@@ -580,9 +690,9 @@ while True:
         
         # Instructions with adaptive text
         if actual_width < 800:
-            instruction_text = "[R] Again | [Q] Quit | [L] Marks"
+            instruction_text = "[R] Again | [Q] Quit | [B] Back | [L] Marks"
         else:
-            instruction_text = "Press [R] to play again  |  [Q] to quit  |  [L] to toggle landmarks"
+            instruction_text = "Press [R] to play again  |  [Q] to quit  |  [B/ESC] to go back  |  [L] to toggle landmarks"
         
         inst_font_size = 0.8 * text_scale
         inst_size = cv2.getTextSize(instruction_text, cv2.FONT_HERSHEY_SIMPLEX, inst_font_size, max(1, int(2 * text_scale)))[0]
@@ -594,6 +704,26 @@ while True:
     else:
         # Show game instructions when no result (adaptive)
         if not round_active:
+            # Right hand reminder (no emoji)
+            if actual_width < 800:
+                hand_text = ">> USE RIGHT HAND <<"
+            else:
+                hand_text = ">> USE YOUR RIGHT HAND TO PLAY <<"
+            
+            hand_font_size = 0.9 * text_scale
+            hand_size = cv2.getTextSize(hand_text, cv2.FONT_HERSHEY_DUPLEX, hand_font_size, max(1, int(3 * text_scale)))[0]
+            hand_x = max(10, (w - hand_size[0]) // 2)
+            hand_y = h - int(90 * ui_scale)
+            
+            # Background for hand reminder
+            cv2.rectangle(frame, 
+                         (hand_x - 10, hand_y - hand_size[1] - 5), 
+                         (hand_x + hand_size[0] + 10, hand_y + 5), 
+                         (0, 0, 200), -1)
+            cv2.putText(frame, hand_text, (hand_x, hand_y), cv2.FONT_HERSHEY_DUPLEX, 
+                        hand_font_size, (255, 255, 255), max(1, int(3 * text_scale)))
+            
+            # Show face instruction
             if actual_width < 800:
                 instruction_text = "Show face to start!"
             else:
@@ -607,16 +737,38 @@ while True:
             cv2.putText(frame, instruction_text, (inst_x, inst_y), cv2.FONT_HERSHEY_SIMPLEX, 
                         inst_font_size, (255, 255, 0), max(1, int(3 * text_scale)))
 
-    # Resize the frame for better display (keeping aspect ratio) - Auto-adjusted based on camera resolution
-    aspect_ratio = w / h
-    new_height = int(display_width / aspect_ratio)
-    frame_resized = cv2.resize(frame, (display_width, new_height))
+    # Resize the frame to fill the screen while maintaining aspect ratio
+    if is_fullscreen:
+        # Calculate scaling to fill screen while maintaining aspect ratio
+        scale_w = screen_width / w
+        scale_h = screen_height / h
+        scale = max(scale_w, scale_h)  # Use max to fill the screen
+        
+        new_width = int(w * scale)
+        new_height = int(h * scale)
+        frame_resized = cv2.resize(frame, (new_width, new_height))
+        
+        # Center the frame if it's larger than screen
+        if new_width > screen_width:
+            crop_x = (new_width - screen_width) // 2
+            frame_resized = frame_resized[:, crop_x:crop_x + screen_width]
+        if new_height > screen_height:
+            crop_y = (new_height - screen_height) // 2
+            frame_resized = frame_resized[crop_y:crop_y + screen_height, :]
+    else:
+        # Windowed mode - use original scaling
+        aspect_ratio = w / h
+        new_height = int(display_width / aspect_ratio)
+        frame_resized = cv2.resize(frame, (display_width, new_height))
 
     # Display the resized frame
     cv2.imshow("Rock Paper Scissors", frame_resized)
 
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
+        break
+    elif key == ord('b') or key == 27:  # B or ESC to go back
+        print("\n[RETURNING TO LAUNCHER...]")
         break
     elif key == ord('r'):
         player_move = ""
@@ -627,6 +779,17 @@ while True:
     elif key == ord('l') or key == ord('L'):
         show_landmarks = not show_landmarks
         print(f"Landmarks display: {'ON' if show_landmarks else 'OFF'}")
+    elif key == ord('f') or key == ord('F'):
+        is_fullscreen = not is_fullscreen
+        if is_fullscreen:
+            cv2.setWindowProperty("Rock Paper Scissors", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            print("Fullscreen mode: ON")
+        else:
+            cv2.setWindowProperty("Rock Paper Scissors", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+            print("Fullscreen mode: OFF")
+    elif key == ord('s') or key == ord('S'):
+        sound_enabled = not sound_enabled
+        print(f"🔊 Sound: {'ON' if sound_enabled else 'OFF'}")
 
 cap.release()
 cv2.destroyAllWindows()

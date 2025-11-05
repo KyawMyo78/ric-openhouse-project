@@ -40,13 +40,12 @@ class DrawableObject:
     def move(self, delta_x, delta_y):
         """Move object by delta"""
         if self.shape_type == 'line':
+            # Move center (like other shapes move position)
+            if hasattr(self, 'center') and self.center:
+                self.center = (self.center[0] + delta_x, self.center[1] + delta_y)
+                self.position = self.center
+            # Update working points for selection
             self.points = [(x + delta_x, y + delta_y) for x, y in self.points]
-            # Also update original_points so transformations work correctly
-            if hasattr(self, 'original_points'):
-                self.original_points = [(x + delta_x, y + delta_y) for x, y in self.original_points]
-            # Update center position
-            if hasattr(self, '_update_center'):
-                self._update_center()
         else:
             self.position = (self.position[0] + delta_x, self.position[1] + delta_y)
     
@@ -65,15 +64,26 @@ class Line(DrawableObject):
     def __init__(self, color=(0, 255, 0), thickness=3):
         super().__init__('line', (0, 0), color)
         self.thickness = thickness
-        self.original_points = []  # Store original points for resize/rotate
-        self.center = None  # Center point for transformations
+        self.original_points = []  # Store original points NEVER modified after drawing ends
+        self.original_center = None  # Original center NEVER modified after drawing ends
+        self.center = None  # Current center (can move)
         self.size = 1.0  # Use as scale factor for resize
+        self.is_drawing = True  # Flag to indicate if still being drawn
         
     def add_point(self, point):
         """Add point to line path"""
         self.points.append(point)
-        self.original_points = self.points.copy()
+        self.original_points.append(point)
+        # Don't update center while drawing - wait until finished
+    
+    def finish_drawing(self):
+        """Called when drawing is complete"""
+        self.is_drawing = False
+        # Calculate and finalize the center ONLY ONCE
         self._update_center()
+        # Only set original_center if not already set
+        if self.original_center is None:
+            self.original_center = self.center
     
     def _update_center(self):
         """Calculate center point of the line"""
@@ -85,9 +95,16 @@ class Line(DrawableObject):
     
     def draw(self, frame):
         """Draw line on frame"""
-        if len(self.original_points) > 1:
+        # While drawing, use points directly; after drawing, apply transformations
+        if self.is_drawing:
+            display_points = self.points
+        elif len(self.original_points) > 1:
             # Get transformed points (apply resize and rotation)
             display_points = self._get_transformed_points()
+        else:
+            display_points = self.points
+        
+        if len(display_points) > 1:
             
             for i in range(1, len(display_points)):
                 color = self.color if not self.selected else (255, 0, 255)
@@ -140,11 +157,16 @@ class Line(DrawableObject):
         if not self.center or len(self.original_points) == 0:
             return self.points
         
+        # If original_center is not set yet (still drawing), use current points
+        if self.original_center is None:
+            return self.points
+        
         import math
         
-        # Start with original points
+        # Start with original points (NEVER modified)
         transformed = []
-        cx, cy = self.center
+        cx, cy = self.center  # Current center (can be moved)
+        orig_cx, orig_cy = self.original_center  # Original center (fixed)
         
         # Get scale factor (stored in self.size)
         scale = self.size if hasattr(self, 'size') and self.size != 0 else 1.0
@@ -154,11 +176,11 @@ class Line(DrawableObject):
         cos_a = math.cos(angle_rad)
         sin_a = math.sin(angle_rad)
         
-        # Apply scale and rotation to each point
+        # Apply scale and rotation to each original point, then translate to current center
         for px, py in self.original_points:
-            # Get relative position from center
-            dx = px - cx
-            dy = py - cy
+            # Get relative position from ORIGINAL center
+            dx = px - orig_cx
+            dy = py - orig_cy
             
             # Apply scale
             dx *= scale
@@ -170,7 +192,7 @@ class Line(DrawableObject):
                 new_dy = dx * sin_a + dy * cos_a
                 dx, dy = new_dx, new_dy
             
-            # Translate back to center
+            # Translate to CURRENT center
             new_x = int(cx + dx)
             new_y = int(cy + dy)
             transformed.append((new_x, new_y))
@@ -363,6 +385,9 @@ class DrawManager:
         """Finish drawing"""
         if self.drawing and self.current_object:
             if self.current_shape == 'line' and len(self.current_object.points) > 1:
+                # Finalize the line before adding to objects
+                if hasattr(self.current_object, 'finish_drawing'):
+                    self.current_object.finish_drawing()
                 self.objects.append(self.current_object)
                 self._save_history()
             self.current_object = None

@@ -381,35 +381,54 @@ class HandTracker:
         if not self.finger_positions or not self.landmarks:
             return False
         
-        # Get finger tips and base joints (MCP - knuckles)
+        import math
+        
+        # Get finger tips
         index_tip = self.finger_positions['index_tip']
         middle_tip = self.finger_positions['middle_tip']
         ring_tip = self.finger_positions['ring_tip']
         pinky_tip = self.finger_positions['pinky_tip']
-        wrist = self.finger_positions['wrist']
         
-        # Get MCP (knuckle) positions for distance calculation
+        # Get MCP (knuckle) positions - base of each finger
         index_mcp = (int(self.landmarks[5].x * self.frame_width), int(self.landmarks[5].y * self.frame_height))
         middle_mcp = (int(self.landmarks[9].x * self.frame_width), int(self.landmarks[9].y * self.frame_height))
         ring_mcp = (int(self.landmarks[13].x * self.frame_width), int(self.landmarks[13].y * self.frame_height))
         pinky_mcp = (int(self.landmarks[17].x * self.frame_width), int(self.landmarks[17].y * self.frame_height))
         
-        # Calculate distances from tip to knuckle (MCP) for each finger
-        # Extended finger = large distance, Curled finger = small distance
-        import math
+        # Get PIP (middle joint) positions for better curl detection
+        index_pip = (int(self.landmarks[6].x * self.frame_width), int(self.landmarks[6].y * self.frame_height))
+        middle_pip = (int(self.landmarks[10].x * self.frame_width), int(self.landmarks[10].y * self.frame_height))
+        ring_pip = (int(self.landmarks[14].x * self.frame_width), int(self.landmarks[14].y * self.frame_height))
+        pinky_pip = (int(self.landmarks[18].x * self.frame_width), int(self.landmarks[18].y * self.frame_height))
+        
+        # Calculate tip-to-MCP distances (full finger length when extended)
         index_distance = math.sqrt((index_tip[0] - index_mcp[0])**2 + (index_tip[1] - index_mcp[1])**2)
         middle_distance = math.sqrt((middle_tip[0] - middle_mcp[0])**2 + (middle_tip[1] - middle_mcp[1])**2)
         ring_distance = math.sqrt((ring_tip[0] - ring_mcp[0])**2 + (ring_tip[1] - ring_mcp[1])**2)
         pinky_distance = math.sqrt((pinky_tip[0] - pinky_mcp[0])**2 + (pinky_tip[1] - pinky_mcp[1])**2)
         
-        # Index finger must be significantly more extended than other fingers
-        # This works regardless of hand rotation/orientation
-        index_extended = index_distance > 80  # Index must be extended
-        middle_curled = middle_distance < index_distance * 0.65  # Middle significantly shorter
-        ring_curled = ring_distance < index_distance * 0.65  # Ring significantly shorter
-        pinky_curled = pinky_distance < index_distance * 0.65  # Pinky significantly shorter
+        # Calculate tip-to-PIP distances (should be small if curled)
+        middle_tip_to_pip = math.sqrt((middle_tip[0] - middle_pip[0])**2 + (middle_tip[1] - middle_pip[1])**2)
+        ring_tip_to_pip = math.sqrt((ring_tip[0] - ring_pip[0])**2 + (ring_tip[1] - ring_pip[1])**2)
+        pinky_tip_to_pip = math.sqrt((pinky_tip[0] - pinky_pip[0])**2 + (pinky_tip[1] - pinky_pip[1])**2)
         
-        return index_extended and middle_curled and ring_curled and pinky_curled
+        # Index finger must be extended (long distance from tip to knuckle)
+        index_extended = index_distance > 85
+        
+        # Other fingers must be curled (two checks for accuracy):
+        # 1. Tip-to-MCP distance is much shorter than index
+        # 2. Tip-to-PIP distance is small (finger is bent at middle joint)
+        middle_curled = (middle_distance < index_distance * 0.65) or (middle_tip_to_pip < 50)
+        ring_curled = (ring_distance < index_distance * 0.65) or (ring_tip_to_pip < 50)
+        pinky_curled = (pinky_distance < index_distance * 0.65) or (pinky_tip_to_pip < 45)
+        
+        # Check thumb is not extended (avoid confusion with pointing)
+        thumb_tip = self.finger_positions['thumb_tip']
+        thumb_mcp = (int(self.landmarks[2].x * self.frame_width), int(self.landmarks[2].y * self.frame_height))
+        thumb_distance = math.sqrt((thumb_tip[0] - thumb_mcp[0])**2 + (thumb_tip[1] - thumb_mcp[1])**2)
+        thumb_not_extended = thumb_distance < index_distance * 0.8
+        
+        return index_extended and middle_curled and ring_curled and pinky_curled and thumb_not_extended
     
     def _is_three_fingers_up(self):
         """Check if index, middle, and ring fingers are up"""

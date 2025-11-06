@@ -109,7 +109,7 @@ FRUIT_SLICED_IMAGES = {}
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 hands = mp_hands.Hands(
-    max_num_hands=1,
+    max_num_hands=3,  # Detect up to 3 hands for multiplayer
     min_detection_confidence=0.5,  # Lower to detect partial hands
     min_tracking_confidence=0.3,   # Lower for tracking with partial visibility
     model_complexity=0,            # Faster model for better frame rate
@@ -568,12 +568,11 @@ class Game:
         self.lives = 3
         self.last_spawn_time = time.time()
         self.start_time = time.time()  # Track game start time
+        self.final_time = 0  # Store time when game ends
         self.game_over = False
-        self.finger_trail = []  # Store recent finger positions
-        self.finger_x = None
-        self.finger_y = None
-        self.prev_finger_x = None
-        self.prev_finger_y = None
+        self.finger_trails = []  # Store finger trails for each hand (list of lists)
+        self.finger_positions = []  # Store current finger positions for all hands
+        self.prev_finger_positions = []  # Store previous finger positions for all hands
         self.difficulty_level = 1  # Track current difficulty
         self.combo = 0  # Track consecutive slices
         self.last_slice_time = 0  # Track last slice for combo
@@ -629,15 +628,24 @@ class Game:
         for fruit in self.fruits:
             fruit.update()
             
-            # Check if fruit was sliced - check against multiple trail points for fast movements
-            if not fruit.sliced and len(self.finger_trail) >= 2:
-                # Check the last few segments of the finger trail
-                check_segments = min(5, len(self.finger_trail) - 1)  # Check last 5 segments
-                for i in range(len(self.finger_trail) - 1, len(self.finger_trail) - check_segments - 1, -1):
-                    if i > 0:
-                        x1, y1 = self.finger_trail[i-1]
-                        x2, y2 = self.finger_trail[i]
-                        if fruit.check_collision(x2, y2, x1, y1):
+            # Check if fruit was sliced - check against all hands' trails
+            if not fruit.sliced:
+                sliced = False
+                for trail in self.finger_trails:
+                    if len(trail) >= 2:
+                        # Check the last few segments of the finger trail
+                        check_segments = min(5, len(trail) - 1)  # Check last 5 segments
+                        for i in range(len(trail) - 1, len(trail) - check_segments - 1, -1):
+                            if i > 0:
+                                x1, y1 = trail[i-1]
+                                x2, y2 = trail[i]
+                                if fruit.check_collision(x2, y2, x1, y1):
+                                    sliced = True
+                                    break
+                        if sliced:
+                            break
+                
+                if sliced:
                             fruit.sliced = True
                             fruit.slice_time = time.time()
                             self.score += fruit.fruit_type["points"]
@@ -689,16 +697,19 @@ class Game:
                     LOSE_LIFE_SOUND.play()  # Play lose life sound
                     if self.lives <= 0:
                         self.game_over = True
+                        self.final_time = int(time.time() - self.start_time)  # Capture final time
                         GAME_OVER_SOUND.play()  # Play game over sound
-                fruits_to_remove.append(fruit)
+                if fruit not in fruits_to_remove:  # Avoid duplicates
+                    fruits_to_remove.append(fruit)
             
             # Remove sliced fruits after animation
-            if fruit.sliced and time.time() - fruit.slice_time > 0.5:
+            elif fruit.sliced and time.time() - fruit.slice_time > 0.5:  # Use elif to prevent double-add
                 fruits_to_remove.append(fruit)
         
         # Remove marked fruits
         for fruit in fruits_to_remove:
-            self.fruits.remove(fruit)
+            if fruit in self.fruits:  # Safety check
+                self.fruits.remove(fruit)
     
     def draw(self, frame):
         """Draw all game elements"""
@@ -706,13 +717,15 @@ class Game:
         for fruit in self.fruits:
             fruit.draw(frame)
         
-        # Draw finger trail
-        if len(self.finger_trail) > 1:
-            for i in range(1, len(self.finger_trail)):
-                # Fade trail effect
-                thickness = max(1, int((i / len(self.finger_trail)) * 5))
-                cv2.line(frame, self.finger_trail[i-1], self.finger_trail[i], 
-                        (0, 255, 255), thickness)
+        # Draw finger trails for all hands
+        trail_colors = [(0, 255, 255), (255, 0, 255), (0, 255, 0)]  # Cyan, Magenta, Green
+        for hand_idx, trail in enumerate(self.finger_trails):
+            if len(trail) > 1:
+                color = trail_colors[hand_idx % len(trail_colors)]
+                for i in range(1, len(trail)):
+                    # Fade trail effect
+                    thickness = max(1, int((i / len(trail)) * 5))
+                    cv2.line(frame, trail[i-1], trail[i], color, thickness)
         
         # Draw UI - Score and Difficulty
         cv2.rectangle(frame, (10, 10), (300, 130), (0, 0, 0), -1)
@@ -755,10 +768,9 @@ class Game:
             cv2.rectangle(overlay, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
             
-            # Game over text
-            elapsed = int(time.time() - self.start_time)
-            minutes = elapsed // 60
-            seconds = elapsed % 60
+            # Game over text - use captured final_time instead of calculating
+            minutes = self.final_time // 60
+            seconds = self.final_time % 60
             
             cv2.putText(frame, "GAME OVER!", 
                        (WINDOW_WIDTH // 2 - 200, WINDOW_HEIGHT // 2 - 100),
@@ -776,26 +788,40 @@ class Game:
                        (WINDOW_WIDTH // 2 - 280, WINDOW_HEIGHT // 2 + 140),
                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     
-    def update_finger_position(self, x, y):
-        """Update finger tracking position"""
-        self.prev_finger_x = self.finger_x
-        self.prev_finger_y = self.finger_y
-        self.finger_x = x
-        self.finger_y = y
+    def update_finger_positions(self, positions):
+        """Update finger tracking positions for multiple hands"""
+        self.prev_finger_positions = self.finger_positions.copy()
+        self.finger_positions = positions
         
-        # Add to trail
-        self.finger_trail.append((x, y))
-        if len(self.finger_trail) > SLICE_TRAIL_LENGTH:
-            self.finger_trail.pop(0)
+        # Update trails for each hand
+        while len(self.finger_trails) < len(positions):
+            self.finger_trails.append([])
+        
+        # Add current positions to trails
+        for i, (x, y) in enumerate(positions):
+            if i < len(self.finger_trails):
+                self.finger_trails[i].append((x, y))
+                if len(self.finger_trails[i]) > SLICE_TRAIL_LENGTH:
+                    self.finger_trails[i].pop(0)
+        
+        # Remove extra trails if fewer hands detected
+        if len(self.finger_trails) > len(positions):
+            self.finger_trails = self.finger_trails[:len(positions)]
     
     def reset(self):
         """Reset game state"""
         self.fruits = []
         self.score = 0
-        self.lives = 3
+        self.lives = 5
         self.last_spawn_time = time.time()
+        self.start_time = time.time()  # Reset timer
+        self.final_time = 0  # Reset final time
         self.game_over = False
-        self.finger_trail = []
+        self.finger_trails = []
+        self.finger_positions = []
+        self.prev_finger_positions = []
+        self.difficulty_level = 1  # Reset difficulty level
+        self.combo = 0  # Reset combo
 
 # ============================================================================
 # MAIN GAME LOOP
@@ -878,30 +904,39 @@ def main():
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(rgb_frame)
         
-        # Detect hand and get index finger tip position
+        # Detect hands and get index finger tip positions
         hand_detected = False
+        finger_positions = []
         if results.multi_hand_landmarks:
             hand_detected = True
-            for hand_landmarks in results.multi_hand_landmarks:
+            finger_colors = [(0, 255, 255), (255, 0, 255), (0, 255, 0)]  # Cyan, Magenta, Green
+            
+            for hand_idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
                 # Get index finger tip (landmark 8)
                 index_tip = hand_landmarks.landmark[8]
                 finger_x = int(index_tip.x * WINDOW_WIDTH)
                 finger_y = int(index_tip.y * WINDOW_HEIGHT)
                 
-                # Update game with finger position
-                game.update_finger_position(finger_x, finger_y)
+                finger_positions.append((finger_x, finger_y))
                 
-                # Draw hand landmarks (optional)
+                # Draw hand landmarks with different colors
+                color = finger_colors[hand_idx % len(finger_colors)]
                 mp_drawing.draw_landmarks(
                     frame, hand_landmarks, mp_hands.HAND_CONNECTIONS,
                     mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                    mp_drawing.DrawingSpec(color=(255, 255, 0), thickness=2)
+                    mp_drawing.DrawingSpec(color=color, thickness=2)
                 )
                 
-                # Highlight index finger
-                cv2.circle(frame, (finger_x, finger_y), 15, (0, 255, 255), -1)
+                # Highlight index finger with hand-specific color
+                cv2.circle(frame, (finger_x, finger_y), 15, color, -1)
                 cv2.circle(frame, (finger_x, finger_y), 15, (255, 255, 255), 3)
+            
+            # Update game with all finger positions
+            game.update_finger_positions(finger_positions)
         else:
+            # Clear trails when no hands detected
+            game.update_finger_positions([])
+            
             # Show warning when hand is not detected
             if not game.game_over:
                 cv2.putText(frame, "HAND NOT DETECTED!", 

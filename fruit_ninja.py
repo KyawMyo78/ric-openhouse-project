@@ -585,7 +585,12 @@ class Game:
         elapsed_time = time.time() - self.start_time
         # Increase difficulty every 20 seconds, max 3x difficulty
         multiplier = min(1 + (elapsed_time / 20) * 0.5, 3.0)
-        self.difficulty_level = int(multiplier * 2)  # For display (1-6)
+        # Map multiplier (1.0 .. 3.0) to a display level in range 1..6
+        # Linear mapping: when multiplier == 1.0 -> level 1, when multiplier == 3.0 -> level 6
+        display_level = int(round(1 + (multiplier - 1.0) * (6 - 1) / (3.0 - 1.0)))
+        # Clamp just in case
+        display_level = max(1, min(6, display_level))
+        self.difficulty_level = display_level
         return multiplier
     
     def spawn_fruit(self):
@@ -843,7 +848,7 @@ def main():
     print("- Keep your FULL HAND visible to the camera")
     print("- Don't let fruits fall off screen!")
     print("- You have 3 lives")
-    print("- Press 'Q' to quit, 'R' to restart, 'B' or ESC to go back")
+    print("- Press 'Q' to quit, 'R' to restart, 'F' for fullscreen, 'B' or ESC to go back")
     
     # Get camera index (from command line argument or choose manually)
     import sys
@@ -883,6 +888,9 @@ def main():
     # Create game window
     cv2.namedWindow('Fruit Ninja', cv2.WINDOW_NORMAL)
     cv2.resizeWindow('Fruit Ninja', WINDOW_WIDTH, WINDOW_HEIGHT)
+    
+    # Fullscreen state
+    is_fullscreen = False
     
     # Initialize game
     game = Game()
@@ -978,6 +986,15 @@ def main():
         elif key == ord('r'):
             print("\n[RESTART] Starting new game...")
             game.reset()
+        elif key == ord('f'):
+            # Toggle fullscreen
+            is_fullscreen = not is_fullscreen
+            if is_fullscreen:
+                cv2.setWindowProperty('Fruit Ninja', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                print("[FULLSCREEN] Enabled")
+            else:
+                cv2.setWindowProperty('Fruit Ninja', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                print("[FULLSCREEN] Disabled")
     
     # Cleanup
     cap.release()
